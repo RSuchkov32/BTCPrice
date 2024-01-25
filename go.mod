@@ -15,6 +15,7 @@ require (
 	github.com/go-redis/redis/v8 v8.11.5
 	github.com/golang/protobuf v1.5.3 // indirect
 	github.com/spf13/cobra v1.8.0
+	github.com/streadway/amqp v1.1.0
 	golang.org/x/net v0.18.0 // indirect
 	golang.org/x/sys v0.14.0 // indirect
 	golang.org/x/text v0.14.0 // indirect

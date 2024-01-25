@@ -1,102 +1,121 @@
-package main
+package Server
 
 import (
+	pricepb "BTCPrice/protofiles"
+	"context"
 	"encoding/json"
-	"fmt"
 	"log"
-	"net"
-	"net/http"
 	"time"
 
-	"google.golang.org/grpc"
-
-	pricepb "BTCPrice/protofiles"
+	"github.com/streadway/amqp"
 )
 
-const tickerRate = 5 * time.Second
+const tickRate = 5 * time.Second
 
-type server struct {
+type Server struct {
 	pricepb.UnimplementedPriceServiceServer
 }
 
-type APIResponse struct {
-	Time struct {
-		UpdatedISO string `json:"updatedISO"`
-	} `json:"time"`
-	Bpi map[string]struct {
-		RateFloat float64 `json:"rate_float"`
-	} `json:"bpi"`
-}
-
-type BTCPrice struct {
-	Time  time.Time `json:"timedate"`
-	Price float64   `json:"price"`
-}
-
-func fetchBTCPrice(currency string, timedate time.Time) (*BTCPrice, error) {
-	//Fetch the price from the API
-	resp, err := http.Get("https://api.coindesk.com/v1/bpi/currentprice.json")
+// Create a new publisher
+func (serv *Server) createPublisher(currency string) (*Publisher, error) {
+	publisher, err := NewPublisher(currency)
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch BTC price: %w", err)
+		log.Printf("Failed to create a publisher for currency %s: %v", currency, err)
+		return nil, err
 	}
-	defer resp.Body.Close()
-
-	//Decode the response
-	var data APIResponse
-	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
-	}
-
-	//Get the price for the requested currency
-	price, ok := data.Bpi[currency]
-	if !ok {
-		return nil, fmt.Errorf("currency not found: %s", currency)
-	}
-
-	return &BTCPrice{Price: price.RateFloat}, nil
+	return publisher, nil
 }
 
-func (s *server) Subscribe(req *pricepb.SubscribeRequest, stream pricepb.PriceService_SubscribeServer) error {
-	currencies := req.GetCurrencies()
-
-	//Send the price every 5 seconds
-	ticker := time.NewTicker(tickerRate)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ticker.C:
-			for _, currency := range currencies {
-				//Fetch the price
-				price, err := fetchBTCPrice(currency, time.Now())
+// Fetch and publish the BTC price
+func (serv *Server) fetchAndPublishBTCPrice(publisher *Publisher, currency string, stream pricepb.PriceService_SubscribeServer, ctx context.Context, cancel context.CancelFunc) {
+	tick := time.NewTicker(tickRate)
+	go func() {
+		for {
+			select {
+			case <-tick.C:
+				err := publisher.FetchAndPublishBTCPrice(currency, time.Now(), stream)
 				if err != nil {
-					log.Println(err)
-					return err
+					log.Printf("error fetching BTC price: %v", err)
+					cancel()
+					return
 				}
-				//Send the price to the client
-				res := &pricepb.SubscribeResponse{
-					Currency: currency,
-					Timedate: time.Now().Format(time.RFC3339),
-					Price:    price.Price,
-				}
-				if err := stream.Send(res); err != nil {
-					return err
-				}
+			case <-ctx.Done():
+				return
 			}
 		}
+	}()
+}
+
+// Consume messages from the queue
+func (serv *Server) consumeMessages(publisher *Publisher, currency string, stream pricepb.PriceService_SubscribeServer, ctx context.Context, cancel context.CancelFunc) {
+	msgs, err := publisher.Channel.Consume(
+		publisher.Queue.Name, // queue
+		"",                   // consumer
+		true,                 // auto-ack
+		false,                // exclusive
+		false,                // no-local
+		false,                // no-wait
+		nil,                  // args
+	)
+	if err != nil {
+		log.Printf("Failed to register a consumer: %v", err)
+		return
+	}
+
+	go func() {
+		for d := range msgs {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+				serv.unmarshalAndSendResponse(d, currency, stream, cancel)
+			}
+		}
+	}()
+}
+
+// Unmarshal the message and send it to the client
+func (serv *Server) unmarshalAndSendResponse(d amqp.Delivery, currency string, stream pricepb.PriceService_SubscribeServer, cancel context.CancelFunc) {
+	price := &BTCPrice{}
+	if err := json.Unmarshal(d.Body, price); err != nil {
+		log.Printf("Error unmarshalling price: %v", err)
+		return
+	}
+
+	res := &pricepb.SubscribeResponse{
+		Currency: currency,
+		Timedate: time.Now().Format(time.RFC3339),
+		Price:    price.Price,
+	}
+
+	if err := stream.Send(res); err != nil {
+		log.Printf("Error sending response: %v", err)
+		cancel()
+		return
 	}
 }
 
-func main() {
-	lis, err := net.Listen("tcp", "0.0.0.0:50051")
-	if err != nil {
-		log.Fatalf("Failed to listen: %v", err)
+// Subscribe to the price updates
+func (serv *Server) Subscribe(req *pricepb.SubscribeRequest, stream pricepb.PriceService_SubscribeServer) error {
+	currencies := req.GetCurrencies()
+	timedate := req.GetStartTime()
+
+	ctx, cancel := context.WithCancel(stream.Context())
+	defer cancel()
+
+	for _, currency := range currencies {
+		publisher, err := serv.createPublisher(currency)
+		if err != nil {
+			log.Fatalf("failed to create a publisher for currency %s: %v", currency, err)
+		}
+		defer publisher.Close()
+		publisher.HistoricalData.RetrieveBTCPriceRedis(currency, timedate, stream)
+
+		serv.fetchAndPublishBTCPrice(publisher, currency, stream, ctx, cancel)
+		serv.consumeMessages(publisher, currency, stream, ctx, cancel)
 	}
 
-	s := grpc.NewServer()
-	pricepb.RegisterPriceServiceServer(s, &server{})
+	<-ctx.Done()
 
-	if err := s.Serve(lis); err != nil {
-		log.Fatalf("Failed to serve: %v", err)
-	}
+	return nil
 }
