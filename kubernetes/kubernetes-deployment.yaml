@@ -1,0 +1,20 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: btcprice-app
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: btcprice-app
+  template:
+    metadata:
+      labels:
+        app: btcprice-app
+    spec:
+      containers:
+      - name: btcprice-app
+        image: btcprice-app
+        ports:
+        - containerPort: 50051
+        imagePullPolicy: IfNotPresent
