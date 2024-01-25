@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+option go_package = "protofiles/price";
+
+service PriceService {
+  rpc Subscribe(SubscribeRequest) returns (stream SubscribeResponse) {}
+}
+
+message SubscribeRequest {
+  repeated string currencies = 1;
+  string startTime = 2;
+}
+
+message SubscribeResponse {
+  string currency = 1;
+  string timedate = 2;
+  double price = 3;
+}
