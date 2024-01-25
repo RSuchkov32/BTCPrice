@@ -1,0 +1,64 @@
+- We want to make sure that it run smoothly and detect failures soon
+
+1) Implement comprehensive logging and monitoring.
+The service would need to use tools like Prometheus for monitoring and Grafana for dashboards. 
+This will help greatly in detecting anomalies and potential failures early.
+
+2) Health Checks.
+Service should use health checks for each component of the system. 
+Also circuit breakers should be used to prevent cascading failures.
+
+3) Error Handling and Retry Mechanisms. 
+In final version error handling could be improved.
+Retry mechanisms could be used for transient failures, especially when fetching data from external sources.
+
+- We're scared that our success will bring malicious actors that will attack us
+
+1) Rate Limiting. 
+Rate limiting could be used to prevent DDoS attacks and to control the load on servers.
+
+2) Validate all inputs.
+All inputs should be validated, especially if there are plans to use databases.
+
+3) Authentication and Authorization. 
+There should be implemented authentication and authorization checks.
+
+4) Conduct security audits and scand dependencies.
+Regularly scan dependencies for vulnerabilities and also security audits should be conducted.
+
+- ... And even if traffic is legit, how can we survive a huge spike or mitigate the problem associated to it 
+
+1) Scalability. 
+Cloud services like AWS Auto Scaling or Kubernetes HPA could be used for automatic scaling.
+
+2) Load Balancing.
+Also load balancers should be used to distribute traffic evenly across servers.
+
+- Sometimes our source data is not available, so users effectively stop receiving updates, which is very confusing
+for them as they see gaps of information even if they reconnect, can you suggest usability changes to deal with
+this scenario?
+
+1) Fallback Mechanisms.
+When primary data sources are unavailable, a fallback to the secondary data sources could be used.
+
+2) Indication if the data is stale. 
+Users should be informed when data is stale.
+There could be 'last updated' timestamp added to the data, so users are aware of potential gaps.
+
+3) User Notification system. 
+A user notification system could also be implemented.
+In order to notify users of any known issues with data sources or the system in general.
+
+4) Data Degradation. 
+In scenarios where live data isn't available, users could be provided with historical data along with a notification about the issue.
+
+5) User Dashboards and Status System.
+There could be dashboards for users where they can see the status of the service. 
+Also Status system could provide information about any ongoing issues, or maintenance periods.
+
+6) Further develop Microservices Architecture. 
+Both Subscriber and Publisher systems could be implemented as separate microservices.
+This increases the maintainability and scalability of the application.
+
+7) Recovery Planning. 
+This includes regular backups and a strategy to restore service in case of a major disaster happening.
